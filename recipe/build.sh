@@ -156,3 +156,14 @@ export LIBRARY_PATH="$PREFIX/lib"
 make -j"${CPU_COUNT:-1}"
 
 make install
+
+# Phase 4: OSU Micro-Benchmarks
+cd ../omb
+
+export PATH="${PREFIX}/bin:$PATH"
+
+./configure CC=mpicc CXX=mpicxx
+
+make -j"${CPU_COUNT:-1}"
+
+make install
