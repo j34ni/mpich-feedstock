@@ -1,0 +1,110 @@
+schema_version: 1
+
+context:
+  mpich_version: "5.0.1"
+  shs_libfabric_version: "14.0.1"
+  ucx_version: "1.20.0"
+  build: 1
+
+package:
+  name: mpich
+  version: ${{ mpich_version }}
+
+source:
+  - url: https://github.com/pmodels/mpich/releases/download/v${{ mpich_version }}/mpich-${{ mpich_version }}.tar.gz
+    sha256: 8c1832a13ddacf071685069f5fadfd1f2877a29e1a628652892c65211b1f3327
+    target_directory: mpich
+  - url: https://github.com/HewlettPackard/shs-libfabric/archive/refs/tags/release/shs-${{ shs_libfabric_version }}.tar.gz
+    sha256: 993e371639dbbf5c36d9e43a5c082742463c5cc471c08bd76575eb3918c2b57d
+    target_directory: shs-libfabric
+    patches:
+      - fix_reallocarray.patch
+      - define_map_huge_shift.patch
+  - url: https://github.com/openucx/ucx/releases/download/v${{ ucx_version }}/ucx-${{ ucx_version }}.tar.gz
+    sha256: 7c8a6093cada179aa1d851b83625e3b25ed5658966e309de5118c27a038c7ef9
+    target_directory: ucx
+
+build:
+  number: ${{ build }}
+  skip:
+    - if: win or osx
+      then: true
+  script: build.sh
+
+requirements:
+  build:
+    - autoconf
+    - automake
+    - bison
+    - ${{ compiler('c') }}
+    - ${{ compiler('cxx') }}
+    - ${{ compiler('fortran') }}
+    - ${{ stdlib("c") }}
+    - libtool
+    - make
+    - patchelf
+    - pkg-config
+  host:
+    - knem-headers
+    - json-c
+    - libcurl
+    - libgomp
+    - libhwloc
+    - libnl
+    - rdma-core
+    - shs-cassini-headers
+    - shs-cxi-drivers
+    - shs-libcxi
+    - xpmem
+  run:
+    - _openmp_mutex
+    - knem-headers
+    - json-c
+    - libcurl
+    - libfuse
+    - libhwloc
+    - libnl
+    - mpi 1.0.* mpich
+    - rdma-core
+    - shs-libcxi
+    - xpmem
+  run_exports:
+    - ${{ pin_subpackage('mpich', upper_bound='x.x') }}
+
+tests:
+  - script:
+      - test -f $PREFIX/lib/libmpi.so
+      - test -f $PREFIX/lib/libmpifort.so
+      - test -f $PREFIX/bin/mpicc
+      - test -f $PREFIX/bin/mpifort
+      - test -f $PREFIX/bin/mpiexec
+      - $PREFIX/bin/mpicc -o hello_mpi hello.c
+      - $PREFIX/bin/mpiexec -np 2 ./hello_mpi
+    requirements:
+      build:
+        - ${{ compiler('c') }}
+    files:
+      recipe:
+        - hello.c
+
+about:
+  homepage: https://www.mpich.org/
+  license: LicenseRef-MPICH
+  license_file:
+    - mpich/COPYRIGHT
+    - shs-libfabric/COPYING
+  summary: A high performance widely portable implementation of the MPI standard.
+  description: |
+    MPICH is a high performance and widely portable implementation of the
+    Message Passing Interface (MPI) standard, with support for both
+    Unified Communication X (UCX) and Open Fabric Interfaces (OFI),
+    including CXI provider support for Slingshot Host Systems
+    (use `export FI_PROVIDER=cxi` to enable it).
+
+    In case the actual netmod is not correctly recognized at run time,
+    activate it using either `MPICH_CH4_NETMOD=ucx` or `MPICH_CH4_NETMOD=ofi`.
+  repository: https://github.com/pmodels/mpich
+
+extra:
+  recipe-maintainers:
+    - j34ni
