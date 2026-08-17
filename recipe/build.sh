@@ -164,7 +164,10 @@ export PATH="${PREFIX}/bin:$PATH"
 export LD_LIBRARY_PATH="${PREFIX}/lib:${LD_LIBRARY_PATH:-}"
 export LIBRARY_PATH="${PREFIX}/lib"
 
-./configure CC=mpicc CXX=mpicxx
+./configure --prefix=$PREFIX \
+            --disable-dependency-tracking \
+            --enable-static=no \
+            CC=mpicc CXX=mpicxx
 
 make -j"${CPU_COUNT:-1}"
 
