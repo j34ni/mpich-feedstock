@@ -84,8 +84,8 @@ tests:
       - test -f $PREFIX/bin/mpiexec
       - $PREFIX/bin/mpicc -o hello_mpi hello.c
       - $PREFIX/bin/mpiexec -np 2 ./hello_mpi
-      - test -f $PREFIX/lib/osu-micro-benchmarks/mpi/pt2pt/osu_latency
-      - $PREFIX/bin/mpiexec -np 2 $PREFIX/lib/osu-micro-benchmarks/mpi/pt2pt/osu_latency
+      - test -f $PREFIX/libexec/osu-micro-benchmarks/mpi/pt2pt/osu_latency
+      - $PREFIX/bin/mpiexec -np 2 $PREFIX/libexec/osu-micro-benchmarks/mpi/pt2pt/osu_latency
     requirements:
       build:
         - ${{ compiler('c') }}
