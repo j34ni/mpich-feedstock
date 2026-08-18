@@ -59,7 +59,7 @@ requirements:
     - shs-cassini-headers
     - shs-cxi-drivers
     - shs-libcxi
-    - xpmem ==2.7.4 h280c20c_1
+    - xpmem
   run:
     - _openmp_mutex
     - knem-headers
