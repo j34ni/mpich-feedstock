@@ -6,12 +6,13 @@ export CONDA_BUILD_SYSROOT
 
 export PATH="${BUILD_PREFIX}/bin:$PATH"
 
-unset F77 F90
-
+# avoid absolute-paths in compilers
 export CC=$(basename "$CC")
 export CXX=$(basename "$CXX")
 export FC=$(basename "$FC")
 export PYTHON=python
+
+unset F77 F90
 
 if [[ "$target_platform" == "linux-aarch64" ]]; then
   export CROSS_F77_SIZEOF_INTEGER=4
@@ -27,22 +28,19 @@ if [[ "$target_platform" == "linux-aarch64" ]]; then
   export CROSS_F90_DOUBLE_MODEL=" 15 , 307"
 fi
 
-export CPPFLAGS="-I$PREFIX/include"
-export CFLAGS="-I$PREFIX/include"
-export CXXFLAGS="-I$PREFIX/include"
-export FFLAGS="-I$PREFIX/include"
-export FCFLAGS="-I$PREFIX/include"
+export CPPFLAGS="-I${PREFIX}/include"
+export CFLAGS="-I${PREFIX}/include"
+export CXXFLAGS="-I${PREFIX}/include"
+export FFLAGS="-I${PREFIX}/include"
+export FCFLAGS="-I${PREFIX}/include"
+export LDFLAGS="-L${PREFIX}/lib -Wl,-rpath,${PREFIX}/lib -Wl,-rpath-link,${PREFIX}/lib -Wl,--as-needed"
 
-# Conditionally add -fallow-argument-mismatch for gfortran >=10
-if [[ "$(uname)" == "Linux" ]] || [[ "$(uname)" == "Darwin" ]]; then
-  GFORTRAN_VERSION=$("${FC}" -dumpversion | cut -d. -f1)
-  if [[ "${GFORTRAN_VERSION}" -ge 10 ]]; then
-    export FFLAGS="${FFLAGS} -fallow-argument-mismatch"
-    export FCFLAGS="${FCFLAGS} -fallow-argument-mismatch"
-  fi
+# gfortran >=10 needs -fallow-argument-mismatch
+GFORTRAN_VERSION=$("${FC}" -dumpversion 2>/dev/null | cut -d. -f1)
+if [[ "${GFORTRAN_VERSION:-0}" -ge 10 ]]; then
+  export FFLAGS="${FFLAGS} -fallow-argument-mismatch"
+  export FCFLAGS="${FCFLAGS} -fallow-argument-mismatch"
 fi
-
-export LDFLAGS="-L$PREFIX/lib -Wl,-rpath,$PREFIX/lib -Wl,-rpath-link,$PREFIX/lib -Wl,--as-needed"
 
 # Phase 1: UCX
 cd ucx
@@ -64,9 +62,7 @@ cd ucx
     --enable-stats
 
 make -j${CPU_COUNT}
-
 make install
-
 find "${PREFIX}/lib" -name "libu*.la" -delete
 
 # Phase 2: shs-libfabric (CXI provider for Slingshot)
@@ -92,69 +88,47 @@ autoreconf -ivf
 
 make -j${CPU_COUNT} src/libfabric.la
 make -j${CPU_COUNT} util/fi_info util/fi_pingpong util/fi_strerror util/fi_mon_sampler
-
 make install-exec install-data
 
 # Phase 3: MPICH
 cd ../mpich
 
 unset PKG_CONFIG_PATH
-
-# configure balks if F90 is defined
-# with a fatal deprecation message pointing to FC
 unset F90 F77
 
-export FCFLAGS="$FFLAGS"
+# MPICH records CPPFLAGS/CFLAGS/etc into wrapper scripts (mpicc, mpicxx...).
+# MPICHLIB_* overrides what goes into the wrappers.
+# Here we want the same flags in both build and wrappers, except LDFLAGS
+# where wrappers don't need -rpath-link and --as-needed.
+export MPICHLIB_LDFLAGS="-L${PREFIX}/lib -Wl,-rpath,${PREFIX}/lib"
+export LIBRARY_PATH="${PREFIX}/lib"
 
-# avoid absolute-paths in compilers
-export CC=$(basename "$CC")
-export CXX=$(basename "$CXX")
-export FC=$(basename "$FC")
-
-export MPICHLIB_CPPFLAGS=$CPPFLAGS
-unset CPPFLAGS
-export MPICHLIB_CFLAGS=$CFLAGS
-unset CFLAGS
-export MPICHLIB_CXXFLAGS=$CXXFLAGS
-unset CXXFLAGS
-export MPICHLIB_LDFLAGS=$LDFLAGS
-unset LDFLAGS
-export MPICHLIB_FFLAGS=$FFLAGS
-unset FFLAGS
-export MPICHLIB_FCFLAGS=$FCFLAGS
-unset FCFLAGS
-
-# set some specific flags that we *do* want recorded in the compilers
-# only the bare minimum of prefix-awareness here
-export CPPFLAGS="-I$PREFIX/include"
-export CFLAGS="-I$PREFIX/include"
-export CXXFLAGS="-I$PREFIX/include"
-export FFLAGS="-I$PREFIX/include"
-export FCFLAGS="-I$PREFIX/include"
-export LDFLAGS="-L$PREFIX/lib -Wl,-rpath,$PREFIX/lib"
-
-export LIBRARY_PATH="$PREFIX/lib"
-
-./configure --prefix=$PREFIX \
+./configure --prefix=${PREFIX} \
             --with-sysroot=${CONDA_BUILD_SYSROOT} \
             --disable-doc \
             --disable-dependency-tracking \
+            --disable-option-checking \
             --enable-cxx \
-            --enable-fortran \
+            --enable-fortran=all \
             --enable-f08 \
             --enable-romio \
+            --enable-nemesis-shm-collectives \
             --with-device=ch4:ucx,ofi \
-            --with-libfabric=$PREFIX \
-            --with-ucx=$PREFIX \
-            --with-xpmem=$PREFIX \
-            --with-hwloc=$PREFIX \
+            --with-libfabric=${PREFIX} \
+            --with-libfabric-include=${PREFIX}/include \
+            --with-libfabric-lib=${PREFIX}/lib \
+            --with-ucx=${PREFIX} \
+            --with-xpmem=${PREFIX} \
+            --with-xpmem-include=${PREFIX}/include \
+            --with-xpmem-lib=${PREFIX}/lib \
+            --with-hwloc=${PREFIX} \
             --with-pm=hydra:gforker \
             --with-wrapper-dl-type=none \
+            --with-dl-type=none \
             --disable-static \
             || (cat config.log; exit 1)
 
-make -j"${CPU_COUNT:-1}"
-
+make -j${CPU_COUNT}
 make install
 
 # Phase 4: OSU Micro-Benchmarks
@@ -164,11 +138,10 @@ export PATH="${PREFIX}/bin:$PATH"
 export LD_LIBRARY_PATH="${PREFIX}/lib:${LD_LIBRARY_PATH:-}"
 export LIBRARY_PATH="${PREFIX}/lib"
 
-./configure --prefix=$PREFIX \
+./configure --prefix=${PREFIX} \
             --disable-dependency-tracking \
-            --enable-static=no \
+            --disable-static \
             CC=mpicc CXX=mpicxx
 
-make -j"${CPU_COUNT:-1}"
-
+make -j${CPU_COUNT}
 make install
