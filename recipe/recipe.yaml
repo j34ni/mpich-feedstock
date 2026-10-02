@@ -1,11 +1,11 @@
 schema_version: 1
 
 context:
-  mpich_version: "5.0.1"
+  mpich_version: "4.3.2"
   shs_libfabric_version: "14.0.1"
   ucx_version: "1.20.0"
   omb_version: "7.5.2"
-  build: 2
+  build: 0
 
 package:
   name: mpich
@@ -13,8 +13,10 @@ package:
 
 source:
   - url: https://github.com/pmodels/mpich/releases/download/v${{ mpich_version }}/mpich-${{ mpich_version }}.tar.gz
-    sha256: 8c1832a13ddacf071685069f5fadfd1f2877a29e1a628652892c65211b1f3327
+    sha256: 47d774587a7156a53752218c811c852e70ac44db9c502dc3f399b4cb817e3818
     target_directory: mpich
+    patches:
+      - ofi-pipeline-deferred-am-hdr-sz.patch
   - url: https://github.com/HewlettPackard/shs-libfabric/archive/refs/tags/release/shs-${{ shs_libfabric_version }}.tar.gz
     sha256: 993e371639dbbf5c36d9e43a5c082742463c5cc471c08bd76575eb3918c2b57d
     target_directory: shs-libfabric

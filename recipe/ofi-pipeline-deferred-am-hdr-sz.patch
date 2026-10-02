@@ -1,0 +1,37 @@
+From: Jean Iaquinta <jeani@uio.no>
+Subject: [PATCH] ch4/ofi: fix AM header lost when a pipelined send is issued deferred
+
+MPIDI_OFI_do_am_isend_pipeline() computed send_req->am_data using the
+am_hdr_sz *parameter*, which progress passes as 0 for deferred issues
+(documented as ignored; the valid value lives in the sreq header). When a
+pipelined first segment (offset == 0) had been queued before any segment
+was sent (deferred queue non-empty at call time), MPIDI_OFI_am_isend_pipeline()
+copied the real AM header into the pack buffer and then packed the payload
+at am_data = header + 0, overwriting the header. The target then parsed
+payload bytes as the MPIDIG message header (e.g. win_id = 0x61616161...),
+MPIDIU_map_lookup() returned MPIDIU_MAP_NOT_FOUND, and dereferencing it
+as MPIR_Win crashed (SIGSEGV reading win->base at 0x47). Reproducible with
+osu_put_bw/osu_get_bw and large pipelined point-to-point messages once a
+second large AM op is issued while a previous pipeline is still queued.
+Use MPIDI_OFI_AM_SREQ_HDR(sreq, am_hdr_sz), consistent with
+MPIDI_OFI_am_isend_pipeline(), which already sizes the header from the sreq.
+
+Same defect as fixed for mpich 5.0.2 (j34ni/alpine-apk commit edc0ca8);
+root-caused under ASan on a 2-container TCP repro (no RDMA hardware
+involved). Upstream status: bug still present in main (verified
+2026-10-01, no known upstream fix).
+
+---
+--- mpich-4.3.2/src/mpid/ch4/netmod/ofi/ofi_am_impl.h	2026-10-01 19:46:47.957544755 +0000
++++ mpich-4.3.2/src/mpid/ch4/netmod/ofi/ofi_am_impl.h	2026-10-01 19:46:47.976736319 +0000
+@@ -677,7 +677,9 @@
+         send_req->msg_hdr = pack_buffer;
+         send_req->am_hdr = (char *) pack_buffer + sizeof(MPIDI_OFI_am_header_t);
+         if (offset == 0) {
+-            send_req->am_data = (char *) send_req->am_hdr + am_hdr_sz;
++            /* am_hdr_sz parameter is ignored when issue_deferred is true; the valid
++             * size is the one saved in the sreq header (see am_init_sreq). */
++            send_req->am_data = (char *) send_req->am_hdr + MPIDI_OFI_AM_SREQ_HDR(sreq, am_hdr_sz);
+         } else {
+             send_req->am_data = (char *) send_req->am_hdr;
+         }
