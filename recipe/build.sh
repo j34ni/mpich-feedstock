@@ -111,7 +111,9 @@ export LIBRARY_PATH="${PREFIX}/lib"
             --enable-cxx \
             --enable-fortran=all \
             --enable-f08 \
+            --enable-mpi-abi \
             --enable-romio \
+            --enable-nemesis-shm-collectives \
             --with-device=ch4:ucx,ofi \
             --with-libfabric=${PREFIX} \
             --with-libfabric-include=${PREFIX}/include \

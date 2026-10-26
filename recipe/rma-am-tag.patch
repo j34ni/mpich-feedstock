@@ -1,0 +1,385 @@
+From: Jean Iaquinta <jeani@uio.no>
+Subject: [PATCH] ch4: RMA over AM (backport of PR 7202) + get_elements_x div0 guard
+
+Two independent changes:
+
+1. src/mpi/datatype/get_elements_x.c: guard against (type1_sz + type2_sz)
+   == 0 for struct datatypes with mixed basic types before computing
+   usable_bytes / (type1_sz + type2_sz).
+
+2. Backport of pmodels/mpich PR https://github.com/pmodels/mpich/pull/7202
+   "ch4: use am_tag_{send,recv} in RMA get/put" (hzhou, branch 2411_rma_am,
+   open upstream as of 2026-10-01, NOT merged; workaround for issue #7118
+   "Hang in one-sided communications across multiple nodes"). Sends RMA
+   get/put requests via am_tag with a per-(comm,src) am_tag so targets
+   match RMA AMs correctly; also carries the div0 guard above.
+   Wire-format note: am_tag fields added to AM header structs -- patching
+   only some ranks of a job is NOT supported (mixing patched and stock
+   builds breaks RMA).
+
+Upstream: https://github.com/pmodels/mpich/pull/7202
+---
+
+diff -ruN mpich-5.0.2rc2/src/mpi/datatype/get_elements_x.c mpich-5.0.2rc2.patched/src/mpi/datatype/get_elements_x.c
+--- mpich-5.0.2rc2/src/mpi/datatype/get_elements_x.c	2026-09-10 22:53:25.000000000 +0000
++++ mpich-5.0.2rc2.patched/src/mpi/datatype/get_elements_x.c	2026-09-15 14:10:33.060471605 +0000
+@@ -64,6 +64,12 @@
+         type1_sz = type2_sz = MPIR_Datatype_get_basic_size(datatype);
+     }
+ 
++    if (type1_sz + type2_sz == 0) {
++        /* this is likely a struct type with mixed basic elements. Let's just bail for now */
++        *bytes_p = 0;
++        return 0;
++    }
++
+     /* determine the number of elements in the region */
+     elements = 2 * (usable_bytes / (type1_sz + type2_sz));
+     if (usable_bytes % (type1_sz + type2_sz) >= type1_sz)
+diff -ruN mpich-5.0.2rc2/src/mpid/ch4/include/mpidpre.h mpich-5.0.2rc2.patched/src/mpid/ch4/include/mpidpre.h
+--- mpich-5.0.2rc2/src/mpid/ch4/include/mpidpre.h	2026-09-10 22:53:25.000000000 +0000
++++ mpich-5.0.2rc2.patched/src/mpid/ch4/include/mpidpre.h	2026-09-15 14:10:33.061388217 +0000
+@@ -124,6 +124,7 @@
+ typedef struct MPIDIG_get_req_t {
+     MPIR_Request *greq_ptr;
+     void *flattened_dt;
++    int am_tag;
+ } MPIDIG_get_req_t;
+ 
+ typedef struct MPIDIG_cswap_req_t {
+diff -ruN mpich-5.0.2rc2/src/mpid/ch4/src/ch4_types.h mpich-5.0.2rc2.patched/src/mpid/ch4/src/ch4_types.h
+--- mpich-5.0.2rc2/src/mpid/ch4/src/ch4_types.h	2026-09-10 22:53:25.000000000 +0000
++++ mpich-5.0.2rc2.patched/src/mpid/ch4/src/ch4_types.h	2026-09-15 14:10:33.061635985 +0000
+@@ -117,6 +117,7 @@
+ 
+ typedef struct MPIDIG_put_dt_ack_msg_t {
+     int src_rank;
++    int am_tag;
+     MPIR_Request *target_preq_ptr;
+     MPIR_Request *origin_preq_ptr;
+ } MPIDIG_put_dt_ack_msg_t;
+@@ -142,6 +143,7 @@
+     MPI_Aint target_datatype;
+     MPI_Aint target_true_lb;
+     int flattened_sz;
++    int am_tag;
+ } MPIDIG_get_msg_t;
+ 
+ typedef struct MPIDIG_get_ack_msg_t {
+diff -ruN mpich-5.0.2rc2/src/mpid/ch4/src/mpidig.h mpich-5.0.2rc2.patched/src/mpid/ch4/src/mpidig.h
+--- mpich-5.0.2rc2/src/mpid/ch4/src/mpidig.h	2026-09-10 22:53:25.000000000 +0000
++++ mpich-5.0.2rc2.patched/src/mpid/ch4/src/mpidig.h	2026-09-15 14:10:59.869815196 +0000
+@@ -78,6 +78,8 @@
+ 
+ enum {
+     MPIDIG_TAG_RECV_COMPLETE = 0,
++    MPIDIG_TAG_GET_COMPLETE,
++    MPIDIG_TAG_PUT_COMPLETE,
+ 
+     MPIDIG_TAG_RECV_STATIC_MAX
+ };
+@@ -136,6 +138,16 @@
+ } MPIDIG_global_t;
+ extern MPIDIG_global_t MPIDIG_global;
+ 
++MPL_STATIC_INLINE_PREFIX int MPIDIG_can_do_tag(MPIR_Request * rreq)
++{
++#ifdef MPIDI_CH4_DIRECT_NETMOD
++    return MPIDI_NM_am_can_do_tag(rreq);
++#else
++    return MPIDI_REQUEST(rreq, is_local) ?
++        MPIDI_SHM_am_can_do_tag(rreq) : MPIDI_NM_am_can_do_tag(rreq);
++#endif
++}
++
+ MPL_STATIC_INLINE_PREFIX int MPIDIG_get_next_am_tag(MPIR_Comm * comm, int src_rank)
+ {
+     int next_am_tag = MPIDI_COMM(comm, next_am_tag)++;
+diff -ruN mpich-5.0.2rc2/src/mpid/ch4/src/mpidig_init.c mpich-5.0.2rc2.patched/src/mpid/ch4/src/mpidig_init.c
+--- mpich-5.0.2rc2/src/mpid/ch4/src/mpidig_init.c	2026-09-10 22:53:25.000000000 +0000
++++ mpich-5.0.2rc2.patched/src/mpid/ch4/src/mpidig_init.c	2026-09-15 14:10:33.061803662 +0000
+@@ -179,6 +179,8 @@
+ 
+     MPIDIG_am_rndv_reg_cb(MPIDIG_RNDV_GENERIC, &MPIDIG_do_cts);
+     MPIDIG_am_tag_recv_reg_cb(MPIDIG_TAG_RECV_COMPLETE, &MPIDIG_tag_recv_complete);
++    MPIDIG_am_tag_recv_reg_cb(MPIDIG_TAG_GET_COMPLETE, &MPIDIG_tag_get_complete);
++    MPIDIG_am_tag_recv_reg_cb(MPIDIG_TAG_PUT_COMPLETE, &MPIDIG_tag_put_complete);
+ 
+     MPIDIG_am_comm_abort_init();
+ 
+diff -ruN mpich-5.0.2rc2/src/mpid/ch4/src/mpidig_pt2pt_callbacks.c mpich-5.0.2rc2.patched/src/mpid/ch4/src/mpidig_pt2pt_callbacks.c
+--- mpich-5.0.2rc2/src/mpid/ch4/src/mpidig_pt2pt_callbacks.c	2026-09-10 22:53:25.000000000 +0000
++++ mpich-5.0.2rc2.patched/src/mpid/ch4/src/mpidig_pt2pt_callbacks.c	2026-09-15 14:11:37.456296907 +0000
+@@ -10,16 +10,6 @@
+ static int handle_unexp_cmpl(MPIR_Request * rreq);
+ static int recv_target_cmpl_cb(MPIR_Request * rreq);
+ 
+-static int can_do_tag(MPIR_Request * rreq)
+-{
+-#ifdef MPIDI_CH4_DIRECT_NETMOD
+-    return MPIDI_NM_am_can_do_tag(rreq);
+-#else
+-    return MPIDI_REQUEST(rreq, is_local) ?
+-        MPIDI_SHM_am_can_do_tag(rreq) : MPIDI_NM_am_can_do_tag(rreq);
+-#endif
+-}
+-
+ int MPIDIG_do_cts(MPIR_Request * rreq)
+ {
+     int mpi_errno = MPI_SUCCESS;
+@@ -31,7 +21,7 @@
+     MPIDIG_send_cts_msg_t am_hdr;
+     am_hdr.sreq_ptr = (MPIDIG_REQUEST(rreq, req->rreq.peer_req_ptr));
+     am_hdr.rreq_ptr = rreq;
+-    if (can_do_tag(rreq)) {
++    if (MPIDIG_can_do_tag(rreq)) {
+         am_hdr.tag = MPIDIG_get_next_am_tag(rreq->comm, source_rank);
+         CH4_CALL(am_tag_recv(source_rank, rreq->comm,
+                              MPIDIG_TAG_RECV_COMPLETE, am_hdr.tag,
+diff -ruN mpich-5.0.2rc2/src/mpid/ch4/src/mpidig_rma.h mpich-5.0.2rc2.patched/src/mpid/ch4/src/mpidig_rma.h
+--- mpich-5.0.2rc2/src/mpid/ch4/src/mpidig_rma.h	2026-09-10 22:53:25.000000000 +0000
++++ mpich-5.0.2rc2.patched/src/mpid/ch4/src/mpidig_rma.h	2026-09-15 14:12:18.880827807 +0000
+@@ -220,6 +220,16 @@
+      * counter in request, thus it can be decreased at request completion. */
+     MPIDIG_win_cmpl_cnts_incr(win, target_rank, &sreq->dev.completion_notification);
+ 
++    if (MPIDIG_can_do_tag(sreq)) {
++        am_hdr.am_tag = MPIDIG_get_next_am_tag(win->comm_ptr, target_rank);
++        CH4_CALL(am_tag_recv(target_rank, win->comm_ptr, MPIDIG_TAG_GET_COMPLETE, am_hdr.am_tag,
++                             origin_addr, origin_count, origin_datatype, vci_target, vci, sreq),
++                 MPIDI_REQUEST(sreq, is_local), mpi_errno);
++        MPIR_ERR_CHECK(mpi_errno);
++    } else {
++        am_hdr.am_tag = -1;
++    }
++
+     int is_contig;
+     MPIR_Datatype_is_contig(target_datatype, &is_contig);
+     if (MPIR_DATATYPE_IS_PREDEFINED(target_datatype) || is_contig) {
+@@ -229,7 +239,7 @@
+ 
+         CH4_CALL(am_isend(target_rank, win->comm_ptr, MPIDIG_GET_REQ, &am_hdr, sizeof(am_hdr),
+                           NULL, 0, MPI_DATATYPE_NULL, vci, vci_target, sreq),
+-                 MPIDI_rank_is_local(target_rank, win->comm_ptr), mpi_errno);
++                 MPIDI_REQUEST(sreq, is_local), mpi_errno);
+         MPIR_ERR_CHECK(mpi_errno);
+         goto fn_exit;
+     }
+@@ -242,7 +252,7 @@
+ 
+     CH4_CALL(am_isend(target_rank, win->comm_ptr, MPIDIG_GET_REQ, &am_hdr, sizeof(am_hdr),
+                       flattened_dt, flattened_sz, MPIR_BYTE_INTERNAL, vci, vci_target, sreq),
+-             MPIDI_rank_is_local(target_rank, win->comm_ptr), mpi_errno);
++             MPIDI_REQUEST(sreq, is_local), mpi_errno);
+     MPIR_ERR_CHECK(mpi_errno);
+ 
+   fn_exit:
+diff -ruN mpich-5.0.2rc2/src/mpid/ch4/src/mpidig_rma_callbacks.c mpich-5.0.2rc2.patched/src/mpid/ch4/src/mpidig_rma_callbacks.c
+--- mpich-5.0.2rc2/src/mpid/ch4/src/mpidig_rma_callbacks.c	2026-09-10 22:53:25.000000000 +0000
++++ mpich-5.0.2rc2.patched/src/mpid/ch4/src/mpidig_rma_callbacks.c	2026-09-15 14:12:26.050919699 +0000
+@@ -896,42 +896,45 @@
+     get_ack.greq_ptr = MPIDIG_REQUEST(rreq, req->greq.greq_ptr);
+     win = rreq->u.rma.win;
+ 
+-    int local_vci = MPIDIG_REQUEST(rreq, req->local_vci);
+-    int remote_vci = MPIDIG_REQUEST(rreq, req->remote_vci);
+-    if (MPIDIG_REQUEST(rreq, req->greq.flattened_dt) == NULL) {
++    if (MPIDIG_REQUEST(rreq, req->greq.flattened_dt)) {
++        /* FIXME: MPIR_Typerep_unflatten should allocate the new object */
++        MPIR_Datatype *dt = (MPIR_Datatype *) MPIR_Handle_obj_alloc(&MPIR_Datatype_mem);
++        if (!dt) {
++            MPIR_ERR_SETANDJUMP1(mpi_errno, MPI_ERR_OTHER, "**nomem", "**nomem %s",
++                                 "MPIR_Datatype_mem");
++        }
++        MPIR_Object_set_ref(dt, 1);
++        MPIR_Typerep_unflatten(dt, MPIDIG_REQUEST(rreq, req->greq.flattened_dt));
++        MPIDIG_REQUEST(rreq, datatype) = dt->handle;
++        /* count is still target_data_sz now, use it for reply */
++        get_ack.target_data_sz = MPIDIG_REQUEST(rreq, count);
++        MPIDIG_REQUEST(rreq, count) /= dt->size;
++    } else {
+         MPIDI_Datatype_check_size(MPIDIG_REQUEST(rreq, datatype),
+                                   MPIDIG_REQUEST(rreq, count), get_ack.target_data_sz);
++    }
++
++    int local_vci = MPIDIG_REQUEST(rreq, req->local_vci);
++    int remote_vci = MPIDIG_REQUEST(rreq, req->remote_vci);
++    if (MPIDIG_REQUEST(rreq, req->greq.am_tag) >= 0) {
++        int src_rank = MPIDIG_REQUEST(rreq, u.target.origin_rank);
++        CH4_CALL(am_tag_send(src_rank, win->comm_ptr, MPIDIG_GET_ACK,
++                             MPIDIG_REQUEST(rreq, req->greq.am_tag),
++                             MPIDIG_REQUEST(rreq, buffer),
++                             MPIDIG_REQUEST(rreq, count),
++                             MPIDIG_REQUEST(rreq, datatype), local_vci, remote_vci, rreq),
++                 MPIDI_REQUEST(rreq, is_local), mpi_errno);
++    } else {
+         CH4_CALL(am_isend_reply(win->comm_ptr, MPIDIG_REQUEST(rreq, u.target.origin_rank),
+                                 MPIDIG_GET_ACK, &get_ack, sizeof(get_ack),
+                                 MPIDIG_REQUEST(rreq, buffer),
+                                 MPIDIG_REQUEST(rreq, count),
+                                 MPIDIG_REQUEST(rreq, datatype), local_vci, remote_vci,
+                                 rreq), MPIDI_REQUEST(rreq, is_local), mpi_errno);
+-        MPID_Request_complete(rreq);
+-        MPIR_ERR_CHECK(mpi_errno);
+-        goto fn_exit;
+     }
+-
+-    /* FIXME: MPIR_Typerep_unflatten should allocate the new object */
+-    MPIR_Datatype *dt = (MPIR_Datatype *) MPIR_Handle_obj_alloc(&MPIR_Datatype_mem);
+-    if (!dt) {
+-        MPIR_ERR_SETANDJUMP1(mpi_errno, MPI_ERR_OTHER, "**nomem", "**nomem %s",
+-                             "MPIR_Datatype_mem");
+-    }
+-    MPIR_Object_set_ref(dt, 1);
+-    MPIR_Typerep_unflatten(dt, MPIDIG_REQUEST(rreq, req->greq.flattened_dt));
+-    MPIDIG_REQUEST(rreq, datatype) = dt->handle;
+-    /* count is still target_data_sz now, use it for reply */
+-    get_ack.target_data_sz = MPIDIG_REQUEST(rreq, count);
+-    MPIDIG_REQUEST(rreq, count) /= dt->size;
+-
+-    CH4_CALL(am_isend_reply(win->comm_ptr, MPIDIG_REQUEST(rreq, u.target.origin_rank),
+-                            MPIDIG_GET_ACK, &get_ack, sizeof(get_ack),
+-                            MPIDIG_REQUEST(rreq, buffer),
+-                            MPIDIG_REQUEST(rreq, count), dt->handle, local_vci,
+-                            remote_vci, rreq), MPIDI_REQUEST(rreq, is_local), mpi_errno);
+     MPID_Request_complete(rreq);
+     MPIR_ERR_CHECK(mpi_errno);
++
+   fn_exit:
+     MPIR_FUNC_EXIT;
+     return mpi_errno;
+@@ -968,12 +971,38 @@
+ 
+     MPIR_FUNC_ENTER;
+ 
++    /* FIXME: MPIR_Typerep_unflatten should allocate the new object */
++    MPIR_Datatype *dt = (MPIR_Datatype *) MPIR_Handle_obj_alloc(&MPIR_Datatype_mem);
++    if (!dt) {
++        MPIR_ERR_SETANDJUMP1(mpi_errno, MPI_ERR_OTHER, "**nomem", "**nomem %s",
++                             "MPIR_Datatype_mem");
++    }
++    /* Note: handle is filled in by MPIR_Handle_obj_alloc() */
++    MPIR_Object_set_ref(dt, 1);
++    MPIR_Typerep_unflatten(dt, MPIDIG_REQUEST(rreq, req->preq.flattened_dt));
++    MPIDIG_REQUEST(rreq, datatype) = dt->handle;
++
+     ack_msg.src_rank = MPIDIG_REQUEST(rreq, u.target.origin_rank);
+     ack_msg.origin_preq_ptr = MPIDIG_REQUEST(rreq, req->preq.preq_ptr);
+     ack_msg.target_preq_ptr = rreq;
+ 
+     int local_vci = MPIDIG_REQUEST(rreq, req->local_vci);
+     int remote_vci = MPIDIG_REQUEST(rreq, req->remote_vci);
++    MPIR_Comm *comm = rreq->u.rma.win->comm_ptr;
++
++    if (MPIDIG_can_do_tag(rreq)) {
++        ack_msg.am_tag = MPIDIG_get_next_am_tag(comm, ack_msg.src_rank);
++        CH4_CALL(am_tag_recv(ack_msg.src_rank, comm, MPIDIG_TAG_PUT_COMPLETE, ack_msg.am_tag,
++                             MPIDIG_REQUEST(rreq, buffer),
++                             MPIDIG_REQUEST(rreq, count),
++                             MPIDIG_REQUEST(rreq, datatype),
++                             local_vci, remote_vci, rreq),
++                 MPIDI_REQUEST(rreq, is_local), mpi_errno);
++        MPIR_ERR_CHECK(mpi_errno);
++    } else {
++        ack_msg.am_tag = -1;
++    }
++
+     CH4_CALL(am_send_hdr_reply
+              (rreq->u.rma.win->comm_ptr, MPIDIG_REQUEST(rreq, u.target.origin_rank),
+               MPIDIG_PUT_DT_ACK, &ack_msg, sizeof(ack_msg), local_vci, remote_vci),
+@@ -1597,13 +1626,25 @@
+     /* origin datatype to be released in MPIDIG_put_data_origin_cb */
+     MPIDIG_REQUEST(rreq, datatype) = MPIDIG_REQUEST(origin_req, datatype);
+ 
+-    CH4_CALL(am_isend_reply(win->comm_ptr, MPIDIG_REQUEST(origin_req, u.origin.target_rank),
+-                            MPIDIG_PUT_DAT_REQ, &dat_msg, sizeof(dat_msg),
+-                            MPIDIG_REQUEST(origin_req, buffer),
+-                            MPIDIG_REQUEST(origin_req, count),
+-                            MPIDIG_REQUEST(origin_req, datatype),
+-                            local_vci, remote_vci, rreq),
+-             (attr & MPIDIG_AM_ATTR__IS_LOCAL), mpi_errno);
++    int target_rank = MPIDIG_REQUEST(origin_req, u.origin.target_rank);
++    if (msg_hdr->am_tag >= 0) {
++        CH4_CALL(am_tag_send(target_rank, win->comm_ptr, MPIDIG_PUT_DAT_REQ,
++                             msg_hdr->am_tag,
++                             MPIDIG_REQUEST(origin_req, buffer),
++                             MPIDIG_REQUEST(origin_req, count),
++                             MPIDIG_REQUEST(origin_req, datatype),
++                             local_vci, remote_vci, rreq),
++                 (attr & MPIDIG_AM_ATTR__IS_LOCAL), mpi_errno);
++
++    } else {
++        CH4_CALL(am_isend_reply(win->comm_ptr, target_rank,
++                                MPIDIG_PUT_DAT_REQ, &dat_msg, sizeof(dat_msg),
++                                MPIDIG_REQUEST(origin_req, buffer),
++                                MPIDIG_REQUEST(origin_req, count),
++                                MPIDIG_REQUEST(origin_req, datatype),
++                                local_vci, remote_vci, rreq),
++                 (attr & MPIDIG_AM_ATTR__IS_LOCAL), mpi_errno);
++    }
+     MPIR_ERR_CHECK(mpi_errno);
+ 
+     if (attr & MPIDIG_AM_ATTR__IS_ASYNC) {
+@@ -1721,19 +1762,9 @@
+ 
+     rreq = (MPIR_Request *) msg_hdr->preq_ptr;
+ 
+-    /* FIXME: MPIR_Typerep_unflatten should allocate the new object */
+-    MPIR_Datatype *dt = (MPIR_Datatype *) MPIR_Handle_obj_alloc(&MPIR_Datatype_mem);
+-    if (!dt) {
+-        MPIR_ERR_SETANDJUMP1(mpi_errno, MPI_ERR_OTHER, "**nomem", "**nomem %s",
+-                             "MPIR_Datatype_mem");
+-    }
+-    /* Note: handle is filled in by MPIR_Handle_obj_alloc() */
+-    MPIR_Object_set_ref(dt, 1);
+-    MPIR_Typerep_unflatten(dt, MPIDIG_REQUEST(rreq, req->preq.flattened_dt));
+-    MPIDIG_REQUEST(rreq, datatype) = dt->handle;
+-
+     MPIDIG_REQUEST(rreq, req->target_cmpl_cb) = put_target_cmpl_cb;
+-    MPIDIG_recv_type_init(MPIDIG_REQUEST(rreq, req->preq.origin_data_sz), rreq);
++    mpi_errno = MPIDIG_recv_type_init(MPIDIG_REQUEST(rreq, req->preq.origin_data_sz), rreq);
++    MPIR_ERR_CHECK(mpi_errno);
+ 
+     if (attr & MPIDIG_AM_ATTR__IS_ASYNC) {
+         *req = rreq;
+@@ -2122,6 +2153,7 @@
+     MPIDIG_REQUEST(rreq, req->greq.flattened_dt) = NULL;
+     MPIDIG_REQUEST(rreq, req->greq.greq_ptr) = msg_hdr->greq_ptr;
+     MPIDIG_REQUEST(rreq, u.target.origin_rank) = msg_hdr->src_rank;
++    MPIDIG_REQUEST(rreq, req->greq.am_tag) = msg_hdr->am_tag;
+ 
+     if (msg_hdr->flattened_sz) {
+         void *flattened_dt = MPL_malloc(msg_hdr->flattened_sz, MPL_MEM_BUFFER);
+@@ -2185,3 +2217,21 @@
+   fn_fail:
+     return mpi_errno;
+ }
++
++int MPIDIG_tag_get_complete(MPIR_Request * req, MPI_Status * status)
++{
++    int mpi_errno = MPI_SUCCESS;
++
++    mpi_errno = get_ack_target_cmpl_cb(req);
++
++    return mpi_errno;
++}
++
++int MPIDIG_tag_put_complete(MPIR_Request * req, MPI_Status * status)
++{
++    int mpi_errno = MPI_SUCCESS;
++
++    mpi_errno = put_target_cmpl_cb(req);
++
++    return mpi_errno;
++}
+diff -ruN mpich-5.0.2rc2/src/mpid/ch4/src/mpidig_rma_callbacks.h mpich-5.0.2rc2.patched/src/mpid/ch4/src/mpidig_rma_callbacks.h
+--- mpich-5.0.2rc2/src/mpid/ch4/src/mpidig_rma_callbacks.h	2026-09-10 22:53:25.000000000 +0000
++++ mpich-5.0.2rc2.patched/src/mpid/ch4/src/mpidig_rma_callbacks.h	2026-09-15 14:10:33.062473097 +0000
+@@ -112,5 +112,7 @@
+                              uint32_t attr, MPIR_Request ** req);
+ int MPIDIG_get_ack_target_msg_cb(void *am_hdr, void *data, MPI_Aint in_data_sz,
+                                  uint32_t attr, MPIR_Request ** req);
++int MPIDIG_tag_get_complete(MPIR_Request * req, MPI_Status * status);
++int MPIDIG_tag_put_complete(MPIR_Request * req, MPI_Status * status);
+ 
+ #endif /* MPIDIG_RMA_CALLBACKS_H_INCLUDED */
