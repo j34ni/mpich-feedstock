@@ -3,7 +3,6 @@ schema_version: 1
 context:
   mpich_version: "5.0.2"
   shs_libfabric_version: "14.0.1"
-  ucx_version: "1.20.0"
   omb_version: "7.5.2"
   build: 0
 
@@ -24,15 +23,12 @@ source:
     patches:
       - fix_reallocarray.patch
       - define_map_huge_shift.patch
-  - url: https://github.com/openucx/ucx/releases/download/v${{ ucx_version }}/ucx-${{ ucx_version }}.tar.gz
-    sha256: 7c8a6093cada179aa1d851b83625e3b25ed5658966e309de5118c27a038c7ef9
-    target_directory: ucx
   - url: https://mvapich.cse.ohio-state.edu/download/mvapich/osu-micro-benchmarks-${{ omb_version }}.tar.gz
     sha256: 618de3d0b1122f73a9229177d2da1e5cd62e431190580cb915f2605849cbbbdc
     target_directory: omb
 
 build:
-  number: ${{ build }}
+  number: 2
   skip:
     - if: win or osx
       then: true
@@ -53,7 +49,6 @@ requirements:
     - pkg-config
     - python
   host:
-    - knem-headers
     - json-c
     - libcurl
     - libgomp
@@ -66,10 +61,8 @@ requirements:
     - xpmem
   run:
     - _openmp_mutex
-    - knem-headers
     - json-c
     - libcurl
-    - libfuse
     - libhwloc
     - libnl
     - mpi 1.0.* mpich
@@ -109,13 +102,9 @@ about:
   summary: A high performance widely portable implementation of the MPI standard.
   description: |
     MPICH is a high performance and widely portable implementation of the
-    Message Passing Interface (MPI) standard, with support for both
-    Unified Communication X (UCX) and Open Fabric Interfaces (OFI),
+    Message Passing Interface (MPI) standard, CH4/OFI network module only,
     including CXI provider support for Slingshot Host Systems
     (use `export FI_PROVIDER=cxi` to enable it).
-
-    In case the actual netmod is not correctly recognized at run time,
-    activate it using either `MPICH_CH4_NETMOD=ucx` or `MPICH_CH4_NETMOD=ofi`.
   repository: https://github.com/pmodels/mpich
 
 extra:
