@@ -5,7 +5,7 @@ context:
   shs_libfabric_version: "14.0.1"
   ucx_version: "1.20.0"
   omb_version: "7.5.2"
-  build: 0
+  build: 3
 
 package:
   name: mpich
