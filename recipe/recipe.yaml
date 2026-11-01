@@ -16,7 +16,7 @@ source:
     target_directory: mpich
     patches:
       - rma-am-tag.patch
-      - ofi-pipeline-deferred-am-hdr-sz.patch
+      - ofi-deferred-am-hdr-sz-backport.patch
   - url: https://github.com/HewlettPackard/shs-libfabric/archive/refs/tags/release/shs-${{ shs_libfabric_version }}.tar.gz
     sha256: 993e371639dbbf5c36d9e43a5c082742463c5cc471c08bd76575eb3918c2b57d
     target_directory: shs-libfabric
