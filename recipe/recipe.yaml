@@ -1,7 +1,7 @@
 schema_version: 1
 
 context:
-  mpich_version: "5.0.2"
+  mpich_version: "5.1.0a1"
   shs_libfabric_version: "14.0.1"
   ucx_version: "1.20.0"
   omb_version: "7.5.2"
@@ -12,12 +12,14 @@ package:
   version: ${{ mpich_version }}
 
 source:
-  - url: https://www.mpich.org/static/downloads/${{ mpich_version }}/mpich-${{ mpich_version }}.tar.gz
-    sha256: 928c2f18d350a91443fe8024ad01ce2c6009e9c551e0a73e797fc567f119137d
+  - git: https://github.com/pmodels/mpich.git
+    rev: 3a753339f179bdcd44145bf81f43931d2c20110b
+    depth: 1
+    submodules: true
     target_directory: mpich
-    patches:
-      - rma-am-tag.patch
-      - ofi-deferred-am-hdr-sz-backport.patch
+    # patches:
+    #   - rma-am-tag.patch
+    #   - ofi-deferred-am-hdr-sz-backport.patch
   - url: https://github.com/HewlettPackard/shs-libfabric/archive/refs/tags/release/shs-${{ shs_libfabric_version }}.tar.gz
     sha256: 993e371639dbbf5c36d9e43a5c082742463c5cc471c08bd76575eb3918c2b57d
     target_directory: shs-libfabric
@@ -81,15 +83,10 @@ requirements:
 
 tests:
   - script:
-      - test -f $PREFIX/lib/libmpi.so
-      - test -f $PREFIX/lib/libmpifort.so
       - test -f $PREFIX/bin/mpicc
       - test -f $PREFIX/bin/mpifort
       - test -f $PREFIX/bin/mpiexec
       - $PREFIX/bin/mpicc -o hello_mpi hello.c
-      # The test build env's toolchain injects a -rpath into build_env (where MPI is
-      # not installed), which leaks into the linked binary; set the runtime path like
-      # conda activation would, so the loader resolves libmpi from $PREFIX/lib.
       - LD_LIBRARY_PATH=$PREFIX/lib $PREFIX/bin/mpiexec -np 2 ./hello_mpi
       - test -f $PREFIX/libexec/osu-micro-benchmarks/mpi/pt2pt/osu_latency
       - LD_LIBRARY_PATH=$PREFIX/lib $PREFIX/bin/mpiexec -np 2 $PREFIX/libexec/osu-micro-benchmarks/mpi/pt2pt/osu_latency

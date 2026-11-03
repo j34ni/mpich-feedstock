@@ -93,6 +93,8 @@ make install-exec install-data
 # Phase 3: MPICH
 cd ../mpich
 
+./autogen.sh
+
 unset PKG_CONFIG_PATH
 unset F90 F77
 
@@ -111,9 +113,8 @@ export LIBRARY_PATH="${PREFIX}/lib"
             --enable-cxx \
             --enable-fortran=all \
             --enable-f08 \
-            --enable-mpi-abi \
+            --enable-mpi-abi=both \
             --enable-romio \
-            --enable-nemesis-shm-collectives \
             --with-device=ch4:ucx,ofi \
             --with-libfabric=${PREFIX} \
             --with-libfabric-include=${PREFIX}/include \
@@ -124,8 +125,6 @@ export LIBRARY_PATH="${PREFIX}/lib"
             --with-xpmem-lib=${PREFIX}/lib \
             --with-hwloc=${PREFIX} \
             --with-pm=hydra:gforker \
-            --with-wrapper-dl-type=none \
-            --with-dl-type=none \
             --disable-static \
             || (cat config.log; exit 1)
 
