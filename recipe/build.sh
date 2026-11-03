@@ -98,10 +98,6 @@ cd ../mpich
 unset PKG_CONFIG_PATH
 unset F90 F77
 
-# MPICH records CPPFLAGS/CFLAGS/etc into wrapper scripts (mpicc, mpicxx...).
-# MPICHLIB_* overrides what goes into the wrappers.
-# Here we want the same flags in both build and wrappers, except LDFLAGS
-# where wrappers don't need -rpath-link and --as-needed.
 export MPICHLIB_LDFLAGS="-L${PREFIX}/lib -Wl,-rpath,${PREFIX}/lib"
 export LIBRARY_PATH="${PREFIX}/lib"
 
@@ -112,7 +108,6 @@ export LIBRARY_PATH="${PREFIX}/lib"
             --disable-option-checking \
             --enable-cxx \
             --enable-fortran \
-            --enable-f08 \
             --enable-mpi-abi=both \
             --enable-romio \
             --with-device=ch4:ucx,ofi \
