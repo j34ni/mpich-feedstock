@@ -111,7 +111,7 @@ export LIBRARY_PATH="${PREFIX}/lib"
             --disable-dependency-tracking \
             --disable-option-checking \
             --enable-cxx \
-            --enable-fortran=all \
+            --enable-fortran \
             --enable-f08 \
             --enable-mpi-abi=both \
             --enable-romio \
