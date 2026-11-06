@@ -42,31 +42,8 @@ if [[ "${GFORTRAN_VERSION:-0}" -ge 10 ]]; then
   export FCFLAGS="${FCFLAGS} -fallow-argument-mismatch"
 fi
 
-# Phase 1: UCX
-cd ucx
-
-./contrib/configure-release \
-    --build="${BUILD}" \
-    --host="${HOST}" \
-    --prefix="${PREFIX}" \
-    --with-sysroot \
-    --disable-static \
-    --enable-openmp \
-    --enable-cma \
-    --enable-mt \
-    --with-gnu-ld \
-    --with-knem=${PREFIX} \
-    --with-rdmacm=${PREFIX} \
-    --with-verbs=${PREFIX} \
-    --with-xpmem=${PREFIX} \
-    --enable-stats
-
-make -j${CPU_COUNT}
-make install
-find "${PREFIX}/lib" -name "libu*.la" -delete
-
-# Phase 2: shs-libfabric (CXI provider for Slingshot)
-cd ../shs-libfabric
+# Phase 1: shs-libfabric (CXI provider for Slingshot)
+cd shs-libfabric
 
 autoreconf -ivf
 
@@ -90,7 +67,7 @@ make -j${CPU_COUNT} src/libfabric.la
 make -j${CPU_COUNT} util/fi_info util/fi_pingpong util/fi_strerror util/fi_mon_sampler
 make install-exec install-data
 
-# Phase 3: MPICH
+# Phase 2: MPICH
 cd ../mpich
 
 ./autogen.sh
@@ -110,11 +87,10 @@ export LIBRARY_PATH="${PREFIX}/lib"
             --enable-fortran \
             --enable-mpi-abi=both \
             --enable-romio \
-            --with-device=ch4:ucx,ofi \
+            --with-device=ch4:ofi \
             --with-libfabric=${PREFIX} \
             --with-libfabric-include=${PREFIX}/include \
             --with-libfabric-lib=${PREFIX}/lib \
-            --with-ucx=${PREFIX} \
             --with-xpmem=${PREFIX} \
             --with-xpmem-include=${PREFIX}/include \
             --with-xpmem-lib=${PREFIX}/lib \
@@ -126,7 +102,7 @@ export LIBRARY_PATH="${PREFIX}/lib"
 make -j${CPU_COUNT}
 make install
 
-# Phase 4: OSU Micro-Benchmarks
+# Phase 3: OSU Micro-Benchmarks
 cd ../omb
 
 export PATH="${PREFIX}/bin:$PATH"
