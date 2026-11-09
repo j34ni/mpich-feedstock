@@ -4,7 +4,7 @@ context:
   mpich_version: "5.1.0a1"
   shs_libfabric_version: "14.0.1"
   omb_version: "7.5.2"
-  build: 1
+  build: 2
 
 package:
   name: mpich
@@ -12,7 +12,12 @@ package:
 
 source:
   - git: https://github.com/pmodels/mpich.git
-    rev: 3a753339f179bdcd44145bf81f43931d2c20110b
+    # 3a753339f (2026-10-20) predates the merge of PR 7202 "ch4: use
+    # am_tag_{send,recv} in RMA get/put" (33374d7, 2026-11-08) and of PR 8124
+    # (get_elements on pairtypes, eabfe03fc) — without them, one-sided
+    # communications hang on HPE Slingshot (cxi). Bump to main@f171950ca,
+    # which also carries b12b08da (deferred am_hdr_sz) and PR 8125.
+    rev: f171950ca34bd911a9c26979b1b3abd7c9b81068
     depth: 1
     submodules: true
     target_directory: mpich
